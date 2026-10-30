@@ -1,5 +1,5 @@
 import os
-import comtypes.client
+import subprocess
 from PIL import Image
 from PyPDF2 import PdfReader, PdfMerger
 from pdf2docx import Converter
@@ -15,25 +15,20 @@ from telegram.ext import (
 
 TOKEN = "9269963148:AAFFdHNvFUDwteS9KIF775Te5x_-8E7QGwQ"
 
-# --- دوال التحويل والمعالجة ---
+# --- دوال التحويل والمعالجة عبر LibreOffice المتوافق مع Linux ---
 
-def convert_ppt_to_pdf(input_path, output_path):
-    comtypes.CoInitialize()
-    powerpoint = comtypes.client.CreateObject("Powerpoint.Application")
-    powerpoint.Visible = 1
-    deck = powerpoint.Presentations.Open(os.path.abspath(input_path))
-    deck.SaveAs(os.path.abspath(output_path), 32)
-    deck.Close()
-    powerpoint.Quit()
-
-def convert_word_to_pdf(input_path, output_path):
-    comtypes.CoInitialize()
-    word = comtypes.client.CreateObject("Word.Application")
-    word.Visible = 0
-    doc = word.Documents.Open(os.path.abspath(input_path))
-    doc.SaveAs(os.path.abspath(output_path), 17)
-    doc.Close()
-    word.Quit()
+def convert_to_pdf_libreoffice(input_path, output_dir):
+    """تحويل أي ملف (PPTX أو DOCX) إلى PDF باستخدام LibreOffice"""
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--convert-to",
+        "pdf",
+        input_path,
+        "--outdir",
+        output_dir,
+    ]
+    subprocess.run(cmd, check=True)
 
 def convert_pdf_to_word(input_path, output_path):
     cv = Converter(input_path)
@@ -124,7 +119,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["action"] = "img_to_pdf"
         await query.edit_message_text("📥 أرسل لي الآن **الصورة**:")
 
-# --- معالجة الملفات ---
+# --- معالجة المستندات ---
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = context.user_data.get("action")
@@ -156,7 +151,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # باقي التحويلات
+    # باقي العمليات
     input_file = os.path.abspath(f"temp_{doc.file_name}")
     status_msg = await update.message.reply_text("⏳ جاري استلام ومعالجة الملف...")
 
@@ -164,28 +159,33 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tg_file = await context.bot.get_file(doc.file_id)
         await tg_file.download_to_drive(input_file)
 
+        # تحويل PowerPoint إلى PDF
         if action == "ppt_to_pdf":
             if not (filename.endswith(".pptx") or filename.endswith(".ppt")):
                 await status_msg.edit_text("⚠️ يرجى إرسال ملف PowerPoint بصيغة (.pptx أو .ppt).")
                 return
-            output_file = os.path.abspath(f"{base_name}.pdf")
-            convert_ppt_to_pdf(input_file, output_file)
+            convert_to_pdf_libreoffice(input_file, os.path.dirname(input_file))
+            output_file = os.path.abspath(f"temp_{base_name}.pdf")
+            
             await status_msg.edit_text("✅ تم التحويل بنجاح! جاري إرسال الملف...")
             with open(output_file, "rb") as f:
                 await update.message.reply_document(document=f, filename=f"{base_name}.pdf")
             if os.path.exists(output_file): os.remove(output_file)
 
+        # تحويل Word إلى PDF
         elif action == "word_to_pdf":
             if not (filename.endswith(".docx") or filename.endswith(".doc")):
                 await status_msg.edit_text("⚠️ يرجى إرسال ملف Word بصيغة (.docx أو .doc).")
                 return
-            output_file = os.path.abspath(f"{base_name}.pdf")
-            convert_word_to_pdf(input_file, output_file)
+            convert_to_pdf_libreoffice(input_file, os.path.dirname(input_file))
+            output_file = os.path.abspath(f"temp_{base_name}.pdf")
+
             await status_msg.edit_text("✅ تم التحويل بنجاح! جاري إرسال الملف...")
             with open(output_file, "rb") as f:
                 await update.message.reply_document(document=f, filename=f"{base_name}.pdf")
             if os.path.exists(output_file): os.remove(output_file)
 
+        # تحويل PDF إلى Word
         elif action == "pdf_to_word":
             if not filename.endswith(".pdf"):
                 await status_msg.edit_text("⚠️ يرجى إرسال ملف بصيغة PDF فقط.")
@@ -197,6 +197,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_document(document=f, filename=f"{base_name}.docx")
             if os.path.exists(output_file): os.remove(output_file)
 
+        # تحويل صورة إلى PDF
         elif action == "img_to_pdf":
             output_file = os.path.abspath(f"{base_name}.pdf")
             convert_img_to_pdf(input_file, output_file)
@@ -205,6 +206,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_document(document=f, filename=f"{base_name}.pdf")
             if os.path.exists(output_file): os.remove(output_file)
 
+        # فحص مباشر لأي ملف PDF
         elif filename.endswith(".pdf"):
             reader = PdfReader(input_file)
             pages_count = len(reader.pages)
@@ -218,7 +220,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text(report)
 
         else:
-            await status_msg.edit_text("يرجى اختيار نوع التحويل أولاً عبر إرسال /start.")
+            await status_msg.edit_text("يرجى اختيار نوع العملية أولاً عبر إرسال /start.")
 
         context.user_data["action"] = None
 
@@ -228,7 +230,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(input_file):
             os.remove(input_file)
 
-# معالجة الصور العادية المرسلة كصورة
+# معالجة الصور المرسلة
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = context.user_data.get("action")
     if action == "img_to_pdf":
@@ -257,7 +259,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لتحويل هذه الصورة إلى PDF، اضغط /start واختر 'صورة ➔ PDF'.")
 
 if __name__ == "__main__":
-    print("البوت يعمل الآن بميزة دمج الملفات وكافة التحويلات...")
+    print("البوت يعمل الآن ويدعم PowerPoint وكافة العمليات...")
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
